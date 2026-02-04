@@ -1,0 +1,279 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>像素风画布 - 纯原生秒开版</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      font-family: "Microsoft YaHei", sans-serif;
+    }
+    body {
+      background: #f5f7fa;
+      padding: 15px;
+    }
+    /* 主卡片容器，模拟Element样式，层级清晰 */
+    .main-card {
+      max-width: 600px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 12px 0 rgba(0, 0, 0, 0.05);
+      border: 1px solid #ebeef5;
+    }
+    /* 像素风画布核心：无抗锯齿+像素化，严格200x200 */
+    #drawCanvas {
+      border: 1px solid #2c3e50;
+      background: #f8f8f8;
+      cursor: crosshair;
+      image-rendering: pixelated;
+    }
+    /* 标题样式 */
+    .canvas-title {
+      text-align: center;
+      font-size: 18px;
+      color: #333;
+      margin: 0 0 8px 0;
+    }
+    /* 提示文字 */
+    .canvas-tip {
+      text-align: center;
+      font-size: 13px;
+      color: #67c23a;
+      margin: 0 0 18px 0;
+    }
+    /* 画布居中容器 */
+    .canvas-box {
+      text-align: center;
+      margin: 0 0 20px 0;
+    }
+    /* 控制组：自动换行，绝不挤压，滑块+按钮100%显示 */
+    .control-group {
+      display: flex;
+      align-items: center;
+      gap: 12px 15px;
+      flex-wrap: wrap;
+      justify-content: center;
+      margin: 0 0 20px 0;
+    }
+    /* 笔刷半径滑块：最小宽度，不缩成线 */
+    #radiusSlider {
+      min-width: 180px;
+      max-width: 250px;
+      flex: 1;
+      height: 6px;
+    }
+    /* 半径数值显示 */
+    #radiusValue {
+      font-size: 14px;
+      color: #333;
+      width: 45px;
+      text-align: center;
+    }
+    /* 清除按钮：红色显眼，固定最小宽度，文字不折行 */
+    #clearBtn {
+      min-width: 140px;
+      white-space: nowrap;
+      padding: 6px 16px;
+      background: #f56c6c;
+      color: #fff;
+      border: 1px solid #f56c6c;
+      border-radius: 4px;
+      cursor: pointer;
+      font-size: 14px;
+      transition: all 0.2s;
+    }
+    #clearBtn:hover {
+      background: #f78989;
+      border-color: #f78989;
+    }
+    /* 分割线 */
+    .divider {
+      height: 1px;
+      background: #ebeef5;
+      margin: 0 0 10px 0;
+    }
+    /* 坐标记录区标题 */
+    .record-title {
+      font-size: 16px;
+      color: #333;
+      margin: 0 0 10px 0;
+    }
+    /* 坐标记录容器：固定高度，滚动显示 */
+    #recordArea {
+      height: 220px;
+      border: 1px solid #eee;
+      border-radius: 4px;
+      padding: 12px;
+      overflow-y: auto;
+      font-size: 14px;
+      line-height: 2;
+      color: #333;
+    }
+    /* 空记录提示 */
+    .empty-tip {
+      font-size: 13px;
+      color: #999;
+    }
+    /* 坐标记录项 */
+    .record-item {
+      display: block;
+    }
+  </style>
+</head>
+<body>
+  <div class="main-card">
+    <h3 class="canvas-title">像素风画布 (200×200px)</h3>
+    <p class="canvas-tip">按住左键绘制 | 圆形像素笔刷 | 20ms自动记录坐标</p>
+
+    <!-- 200x200像素画布 -->
+    <div class="canvas-box">
+      <canvas id="drawCanvas" width="200" height="200"></canvas>
+    </div>
+
+    <!-- 控制区：笔刷滑块+数值+清除按钮（100%显示） -->
+    <div class="control-group">
+      <span style="font-size: 14px;">笔刷半径：</span>
+      <input type="range" id="radiusSlider" min="1" max="20" step="1" value="5">
+      <span id="radiusValue">5</span>px
+      <button id="clearBtn">清除图像&记录</button>
+    </div>
+
+    <!-- 坐标记录区 -->
+    <div class="divider"></div>
+    <h4 class="record-title">坐标记录（画布相对坐标）</h4>
+    <div id="recordArea">
+      <span class="empty-tip">按住鼠标在画布绘制，自动记录笔刷中心坐标~</span>
+    </div>
+  </div>
+
+  <script>
+    // ========== 获取DOM元素（原生直接获取，无依赖） ==========
+    const canvas = document.getElementById('drawCanvas');
+    const ctx = canvas.getContext('2d');
+    const radiusSlider = document.getElementById('radiusSlider');
+    const radiusValue = document.getElementById('radiusValue');
+    const clearBtn = document.getElementById('clearBtn');
+    const recordArea = document.getElementById('recordArea');
+
+    // ========== 全局状态（核心功能变量） ==========
+    let brushRadius = 5;    // 笔刷半径
+    let isDrawing = false;  // 是否正在绘制
+    let lastX = 0;          // 笔刷中心最后X坐标
+    let lastY = 0;          // 笔刷中心最后Y坐标
+    let recordTimer = null; // 20ms坐标记录定时器
+    let recordCount = 0;    // 坐标记录序号
+
+    // ========== 初始化画布（关闭抗锯齿，保证圆形像素风） ==========
+    function initCanvas() {
+      // 全浏览器关闭抗锯齿，圆形笔刷无模糊，纯像素质感
+      ctx.imageSmoothingEnabled = false;
+      ctx.msImageSmoothingEnabled = false;
+      ctx.webkitImageSmoothingEnabled = false;
+      ctx.mozImageSmoothingEnabled = false;
+    }
+
+    // ========== 绑定所有事件（原生事件，无兼容问题） ==========
+    function bindEvents() {
+      // 画布鼠标事件：绘制核心
+      canvas.onmousedown = startDraw;
+      canvas.onmousemove = draw;
+      canvas.onmouseup = stopDraw;
+      canvas.onmouseout = stopDraw;
+      // 滑块事件：实时调节笔刷半径
+      radiusSlider.oninput = updateRadius;
+      // 按钮事件：一键清除
+      clearBtn.onclick = clearAll;
+    }
+
+    // ========== 笔刷半径实时更新（滑块拖动/输入同步） ==========
+    function updateRadius() {
+      brushRadius = parseInt(this.value);
+      radiusValue.textContent = brushRadius;
+    }
+
+    // ========== 开始绘制：启动20ms坐标记录 ==========
+    function startDraw(e) {
+      isDrawing = true;
+      // 获取画布内精准相对坐标（取整，贴合像素）
+      [lastX, lastY] = getCanvasXY(e);
+      // 启动定时器，每20ms记录一次笔刷中心坐标
+      recordTimer = setInterval(() => {
+        recordCoord(lastX, lastY);
+      }, 20);
+    }
+
+    // ========== 核心绘制：圆形像素笔刷（无抗锯齿） ==========
+    function draw(e) {
+      if (!isDrawing) return;
+      // 更新当前笔刷中心坐标
+      [lastX, lastY] = getCanvasXY(e);
+      // 绘制圆形笔刷
+      ctx.beginPath();
+      ctx.arc(lastX, lastY, brushRadius, 0, Math.PI * 2); // 0-360度完整圆形
+      ctx.fillStyle = '#2c3e50'; // 笔刷颜色（深灰，可自定义）
+      ctx.fill();
+    }
+
+    // ========== 停止绘制：清除定时器，结束记录 ==========
+    function stopDraw() {
+      if (!isDrawing) return;
+      isDrawing = false;
+      clearInterval(recordTimer);
+      recordTimer = null;
+    }
+
+    // ========== 工具方法：获取画布内精准相对坐标 ==========
+    function getCanvasXY(e) {
+      const rect = canvas.getBoundingClientRect();
+      // 减去画布偏移，取整得到像素级精准坐标
+      return [
+        Math.round(e.clientX - rect.left),
+        Math.round(e.clientY - rect.top)
+      ];
+    }
+
+    // ========== 坐标记录：20ms一次，追加到记录区 ==========
+    function recordCoord(x, y) {
+      recordCount++;
+      // 移除空提示
+      if (recordArea.querySelector('.empty-tip')) {
+        recordArea.innerHTML = '';
+      }
+      // 新记录放顶部，方便查看最新坐标
+      const recordItem = `<span class="record-item">【${recordCount}】X: ${x}, Y: ${y}</span>`;
+      recordArea.innerHTML = recordItem + recordArea.innerHTML;
+    }
+
+    // ========== 一键清除：画布+记录+所有状态全重置 ==========
+    function clearAll() {
+      // 1. 清空整个画布
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      // 2. 清空坐标记录，恢复空提示
+      recordArea.innerHTML = '<span class="empty-tip">按住鼠标在画布绘制，自动记录笔刷中心坐标~</span>';
+      // 3. 重置所有状态
+      isDrawing = false;
+      lastX = 0;
+      lastY = 0;
+      recordCount = 0;
+      // 4. 清除定时器（防止绘制中清除仍在记录）
+      if (recordTimer) {
+        clearInterval(recordTimer);
+        recordTimer = null;
+      }
+      // 可选：清除成功提示（原生alert，无依赖）
+      alert('清除成功！画布和记录已重置');
+    }
+
+    // ========== 页面初始化：执行核心方法 ==========
+    window.onload = function() {
+      initCanvas();  // 初始化像素画布
+      bindEvents();  // 绑定所有事件
+    };
+  </script>
+</body>
+</html>
