@@ -207,7 +207,7 @@ static esp_err_t panel_st7305_draw_bitmap(esp_lcd_panel_t *panel, int x_start, i
 
     // 创建主缓冲区和临时缓冲区（大小基于面板分辨率）
     uint16_t pages = (st7305->height) / 8;
-    size_t lcd_buf_size = (size_t)st7305->width * pages;
+    size_t lcd_buf_size = (size_t)st7305->width * pages +100;
     uint8_t *lcd_buffer = heap_caps_malloc(lcd_buf_size, MALLOC_CAP_DMA);
     uint8_t *temp_buffer = heap_caps_malloc(lcd_buf_size, MALLOC_CAP_DMA);
     if (!lcd_buffer || !temp_buffer) {
@@ -278,6 +278,7 @@ static esp_err_t panel_st7305_draw_bitmap(esp_lcd_panel_t *panel, int x_start, i
         }
     }
 
+    /*
     // 数据格式转换
     uint16_t k = 0;
     uint16_t width = is_xy_swapped ? st7305->height : st7305->width;
@@ -310,13 +311,14 @@ static esp_err_t panel_st7305_draw_bitmap(esp_lcd_panel_t *panel, int x_start, i
             }
         }
     }
+    */
     // 设置显示范围和发送数据
     uint8_t caset[] = {0x16, 0x26};
     uint8_t raset[] = {0x00, 0x63};
     
     esp_lcd_panel_io_tx_param(io, ST7305_CMD_CASET, caset, sizeof(caset));
     esp_lcd_panel_io_tx_param(io, ST7305_CMD_RASET, raset, sizeof(raset));
-    esp_lcd_panel_io_tx_color(io, ST7305_CMD_RAMWR, temp_buffer, lcd_buf_size);
+    esp_lcd_panel_io_tx_color(io, ST7305_CMD_RAMWR, lcd_buffer, lcd_buf_size);
 
     free(lcd_buffer);
     free(temp_buffer);

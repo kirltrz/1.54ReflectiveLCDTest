@@ -1,4 +1,5 @@
 #include <stdio.h>
+#include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_err.h"
@@ -27,11 +28,38 @@
 // 绘制测试图案
 // 画两条边缘线和一个中心点
 bool is_rotated = 0; // 跟踪旋转状态
+uint8_t *buffer = NULL;
+void lcd_init(void){
+    buffer = heap_caps_malloc(ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100, MALLOC_CAP_DMA);
+    assert(buffer);
+    memset(buffer,0x00,5100);
+}
+void lcd_draw_bit(int x, int y, bool enabled){
+    if(x>=200||y>=200) return;
+    //x += 4;
+    x = 199 - x;
+    uint8_t real_x = x / 4;
+    uint8_t real_y = y / 2;
 
+    uint16_t byte_index = real_y * 51 + real_x;
+
+    uint8_t y_group_index = y % 2 != 0;
+    uint8_t x_group_index = x % 4;
+
+    uint8_t bit_index = 7 - (x_group_index *2 + y_group_index);
+
+    if(enabled)
+        buffer[byte_index] |= (1 << bit_index);
+    else
+        buffer[byte_index] &= ~(1 << bit_index);
+}
+void lcd_display(esp_lcd_panel_handle_t panel_handle){
+    ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, ST7305_RESOLUTION_HOR, ST7305_RESOLUTION_VER, buffer));
+}
 // 绘制测试图案函数
 void draw_test_pattern(uint8_t *buffer, bool rotated)
 {
-    memset(buffer, 0, ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8);
+    memset(buffer, 0, ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100);
 
     int width = rotated ? ST7305_RESOLUTION_VER : ST7305_RESOLUTION_HOR;
     int height = rotated ? ST7305_RESOLUTION_HOR : ST7305_RESOLUTION_VER;
@@ -76,6 +104,43 @@ void draw_test_pattern(uint8_t *buffer, bool rotated)
         }
     }
 }
+// 无返回值，参数为LCD屏句柄，XY移动+边缘反弹，极简测试写法
+void lcd_anim_test(esp_lcd_panel_handle_t panel_handle)
+{
+    lcd_init();                // LCD初始化，与原代码一致
+    int block_x = 50;          // 方块左上角X坐标（初始居中）
+    int block_y = 95;          // 方块左上角Y坐标（初始居中）
+    int dir_x = 1;             // X方向：1=右移，-1=左移
+    int dir_y = 1;             // Y方向：1=下移，-1=上移
+
+    // 无限循环实现反弹动画
+    while(1)
+    {
+        /******** 1. 清屏：200*200全屏置0，避免拖尾 ********/
+        for(int i=0; i<200; i++)
+            for(int j=0; j<200; j++)
+                lcd_draw_bit(j, i, 0);
+        
+        /******** 2. 绘制10*10方块（XY均为变量，随方向移动） ********/
+        for(int i=0; i<10; i++)
+            for(int j=0; j<10; j++)
+                lcd_draw_bit(block_x+j, block_y+i, 1);
+        
+        /******** 3. 刷新显示+50ms延时（控制动画速度） ********/
+        lcd_display(panel_handle);
+        vTaskDelay(pdMS_TO_TICKS(10));
+        
+        /******** 4. 更新坐标：按方向移动（步长1像素） ********/
+        block_x += dir_x;
+        block_y += dir_y;
+        
+        /******** 5. 边界判断+反弹：碰到四周边缘反转对应方向 ********/
+        // X轴反弹：左边界（x<=0）或右边界（x+方块宽>200），反转X方向
+        if(block_x <= 0 || block_x + 10 > 200) dir_x = -dir_x;
+        // Y轴反弹：上边界（y<=0）或下边界（y+方块高>200），反转Y方向
+        if(block_y <= 0 || block_y + 10 > 200) dir_y = -dir_y;
+    }
+}
 
 void app_main(void)
 {
@@ -95,7 +160,7 @@ void app_main(void)
     esp_lcd_panel_io_spi_config_t io_config = {
         .dc_gpio_num    = LCD_PIN_DC,
         .cs_gpio_num    = LCD_PIN_CS,
-        .pclk_hz        = 20 * 1000 * 1000,
+        .pclk_hz        = 40 * 1000 * 1000,
         .lcd_cmd_bits   = 8,
         .lcd_param_bits = 8,
         .spi_mode       = 0,
@@ -118,17 +183,30 @@ void app_main(void)
     ESP_ERROR_CHECK(esp_lcd_panel_swap_xy(panel_handle, is_rotated));
     // ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, true));
     ESP_ERROR_CHECK(esp_lcd_panel_mirror(panel_handle, false, false));
-    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, true));
+    ESP_ERROR_CHECK(esp_lcd_panel_invert_color(panel_handle, false));
     ESP_ERROR_CHECK(esp_lcd_panel_disp_on_off(panel_handle, true));
 
     printf("Display simple pattern");
+    
+    lcd_anim_test(panel_handle);
+    /*
+    lcd_init();
+    for(int i=0; i<200; i++){
+        for(int j=0; j<200; j++){
+            lcd_draw_bit(j,i,1);
+        }
+        vTaskDelay(pdMS_TO_TICKS(1000));
+        lcd_display(panel_handle);
+    }
+    */
 
+    /*
     // 准备测试数据
-    uint8_t *test_pattern = heap_caps_malloc(ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8, MALLOC_CAP_DMA);
+    uint8_t *test_pattern = heap_caps_malloc(ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100, MALLOC_CAP_DMA);
     assert(test_pattern);
-    memset(test_pattern, 0x00, ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8);
+    memset(test_pattern, 0x00, ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100);
     // 初始填充并显示：累积字节扫描，完成一次后翻转配色并继续扫描
-    size_t buf_size = ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8;
+    size_t buf_size = ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100;
     size_t idx = 0;
     bool scanned_is_ff = true; // true：已扫描字节为 0xFF，false：已扫描字节为 0x00
     while (1)
@@ -150,10 +228,10 @@ void app_main(void)
             scanned_is_ff = !scanned_is_ff;
             vTaskDelay(pdMS_TO_TICKS(200)); // 稍作停顿以便观察配色翻转
         } else {
-            vTaskDelay(pdMS_TO_TICKS(2)); // 平常的扫描速度
+            vTaskDelay(pdMS_TO_TICKS(50)); // 平常的扫描速度
         }
     }
 
     // 释放资源
-    free(test_pattern);
+    free(test_pattern);*/
 }
