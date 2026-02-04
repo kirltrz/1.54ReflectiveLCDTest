@@ -2,6 +2,7 @@
 #include <math.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
+#include "freertos/semphr.h"
 #include "esp_err.h"
 #include "driver/gpio.h"
 
@@ -20,22 +21,20 @@
 #define LCD_PIN_CS   3
 #define LCD_PIN_TE   2
 
-#define DC_HIGH gpio_set_level(LCD_PIN_DC, 1)
-#define DC_LOW  gpio_set_level(LCD_PIN_DC, 0)
-#define CS_HIGH gpio_set_level(LCD_PIN_CS, 1)
-#define CS_LOW  gpio_set_level(LCD_PIN_CS, 0)
+#define ABS(X) (X >= 0 ? X : -X)
 
 // 绘制测试图案
 // 画两条边缘线和一个中心点
 bool is_rotated = 0; // 跟踪旋转状态
 uint8_t *buffer = NULL;
+static SemaphoreHandle_t buffer_mutex = NULL;
 void lcd_init(void){
     buffer = heap_caps_malloc(ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100, MALLOC_CAP_DMA);
     assert(buffer);
     memset(buffer,0x00,5100);
 }
 void lcd_draw_bit(int x, int y, bool enabled){
-    if(x>=200||y>=200) return;
+    if(x >= 200 || y >= 200 || x < 0 || y < 0) return;
     //x += 4;
     x = 199 - x;
     uint8_t real_x = x / 4;
@@ -54,11 +53,32 @@ void lcd_draw_bit(int x, int y, bool enabled){
         buffer[byte_index] &= ~(1 << bit_index);
 }
 void lcd_display(esp_lcd_panel_handle_t panel_handle){
+    if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
     ESP_ERROR_CHECK(esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, ST7305_RESOLUTION_HOR, ST7305_RESOLUTION_VER, buffer));
+    if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
 }
+
+// Background task: refresh display at fixed 50Hz (every 20ms)
+void lcd_task(void* arg)
+{
+    esp_lcd_panel_handle_t panel_handle = (esp_lcd_panel_handle_t)arg;
+    const TickType_t period = pdMS_TO_TICKS(20); // 50Hz
+    TickType_t last_wake = xTaskGetTickCount();
+    for (;;)
+    {
+        if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
+        esp_err_t err = esp_lcd_panel_draw_bitmap(panel_handle, 0, 0, ST7305_RESOLUTION_HOR, ST7305_RESOLUTION_VER, buffer);
+        if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
+
+        (void)err; // suppress unused-warning if not used
+        vTaskDelayUntil(&last_wake, period);
+    }
+}
+
 // 绘制测试图案函数
 void draw_test_pattern(uint8_t *buffer, bool rotated)
 {
+    if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
     memset(buffer, 0, ST7305_RESOLUTION_HOR * ST7305_RESOLUTION_VER / 8 +100);
 
     int width = rotated ? ST7305_RESOLUTION_VER : ST7305_RESOLUTION_HOR;
@@ -116,6 +136,7 @@ void lcd_anim_test(esp_lcd_panel_handle_t panel_handle)
     // 无限循环实现反弹动画
     while(1)
     {
+        if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
         /******** 1. 清屏：200*200全屏置0，避免拖尾 ********/
         for(int i=0; i<200; i++)
             for(int j=0; j<200; j++)
@@ -125,9 +146,10 @@ void lcd_anim_test(esp_lcd_panel_handle_t panel_handle)
         for(int i=0; i<10; i++)
             for(int j=0; j<10; j++)
                 lcd_draw_bit(block_x+j, block_y+i, 1);
+
+        if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
         
-        /******** 3. 刷新显示+50ms延时（控制动画速度） ********/
-        lcd_display(panel_handle);
+        /******** 3. 等待下一帧（动画更新节律） ********/
         vTaskDelay(pdMS_TO_TICKS(10));
         
         /******** 4. 更新坐标：按方向移动（步长1像素） ********/
@@ -139,6 +161,102 @@ void lcd_anim_test(esp_lcd_panel_handle_t panel_handle)
         if(block_x <= 0 || block_x + 10 > 200) dir_x = -dir_x;
         // Y轴反弹：上边界（y<=0）或下边界（y+方块高>200），反转Y方向
         if(block_y <= 0 || block_y + 10 > 200) dir_y = -dir_y;
+    }
+}
+
+void lcd_paint_brush(uint8_t x, uint8_t y, uint8_t radius, bool enabled)
+{
+    // 半径为0时，仅绘制中心单个点，直接返回（避免无效循环）
+    if (radius == 0)
+    {
+        if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
+        lcd_draw_bit(x, y, enabled);
+        if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
+        return;
+    }
+
+    if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
+
+    // 关键：将无符号的x/y转成int，避免减法溢出（核心修复点1）
+    int center_x = (int)x;
+    int center_y = (int)y;
+    int r = (int)radius;
+    // 预计算半径平方，避免循环内重复计算，提升效率（优化点）
+    int r_sq = r * r;
+
+    // 修正循环边界为<=，补全所有像素（核心修复点2）
+    // 循环变量用int，遍历范围[中心-r, 中心+r]
+    for (int i = center_y - r; i <= center_y + r; i++)
+    {
+        for (int j = center_x - r; j <= center_x + r; j++)
+        {
+            // LCD屏幕边界校验，过滤无效坐标（核心修复点3）
+            if (j < 0 || j > 199 || i < 0 || i > 199)
+            {
+                continue;
+            }
+
+            // 整数平方替代sqrt，无浮点运算（核心修复点4）
+            // 圆方程：(j-中心x)² + (i-中心y)² < 半径² → 圆内点
+            int dx = j - center_x;
+            int dy = i - center_y;
+            int dist_sq = dx * dx + dy * dy;
+
+            // 距离平方小于半径平方，绘制该点（转uint8_t传给lcd_draw_bit）
+            if (dist_sq < r_sq)
+            {
+                lcd_draw_bit((uint8_t)j, (uint8_t)i, enabled);
+            }
+        }
+    }
+
+    if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
+}
+
+// Circle animation task: move a brush in a circular orbit using existing lcd_paint_brush
+void lcd_circle_anim_task(void* arg)
+{
+    const int center_x = 100;
+    const int center_y = 100;
+    const int orbit_r = 60;
+    const uint8_t brush_r = 10;
+    float angle = 0.0f;
+    float dtheta = 0.08f; // step per frame (signed for direction)
+    int steps_per_rev = (int)(2 * M_PI / fabsf(dtheta) + 0.5f);
+    int step_count = 0;
+    bool draw_mode = true; // true = draw trail; false = erase trail
+
+    // Clear screen before starting animation
+    if (buffer_mutex) xSemaphoreTakeRecursive(buffer_mutex, portMAX_DELAY);
+    for (int yy = 0; yy < 200; yy++)
+        for (int xx = 0; xx < 200; xx++)
+            lcd_draw_bit(xx, yy, 0);
+    if (buffer_mutex) xSemaphoreGiveRecursive(buffer_mutex);
+
+    while (1) {
+        int x = center_x + (int)(cosf(angle) * orbit_r);
+        int y = center_y + (int)(sinf(angle) * orbit_r);
+
+        // Draw or erase the brush at current position (trail persists until erased in erase mode)
+        if (draw_mode) {
+            lcd_paint_brush((uint8_t)x, (uint8_t)y, brush_r, 1);
+        } else {
+            lcd_paint_brush((uint8_t)x, (uint8_t)y, brush_r, 0);
+        }
+
+        step_count++;
+        if (step_count >= steps_per_rev) {
+            step_count = 0;
+            draw_mode = !draw_mode; // toggle draw/erase
+            dtheta = -dtheta;      // reverse direction for '往复' effect
+        }
+
+        angle += dtheta;
+        if (angle >= 2 * M_PI) angle -= 2 * M_PI;
+        else if (angle < 0) angle += 2 * M_PI;
+
+        // animation speed: ~25 FPS
+        vTaskDelay(pdMS_TO_TICKS(20));
     }
 }
 
@@ -188,7 +306,21 @@ void app_main(void)
 
     printf("Display simple pattern");
     
-    lcd_anim_test(panel_handle);
+    lcd_init();
+    buffer_mutex = xSemaphoreCreateRecursiveMutex();
+    assert(buffer_mutex);
+
+    lcd_paint_brush(100,100,10,1);
+
+    // Start background LCD refresh task (50Hz)
+    xTaskCreate(lcd_task, "lcd_task", 4096, panel_handle, 5, NULL);
+
+    // Start circle animation task (uses lcd_paint_brush)
+    xTaskCreate(lcd_circle_anim_task, "lcd_circle", 4096, NULL, 5, NULL);
+
+    // Immediate initial refresh
+    lcd_display(panel_handle);
+    //lcd_anim_test(panel_handle);
     /*
     lcd_init();
     for(int i=0; i<200; i++){
