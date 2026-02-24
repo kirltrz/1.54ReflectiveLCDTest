@@ -1,0 +1,48 @@
+# .github/workflows/esp-idf-ci.yml
+name: ESP-IDF v5.5.x 自动编译
+
+# 触发条件：当代码推送到 main 分支或创建 PR 时
+on:
+  push:
+    branches: [ master ]
+  pull_request:
+    branches: [ master ]
+
+# 要执行的任务
+jobs:
+  build:
+    # 在最新的 Ubuntu 系统上运行
+    runs-on: ubuntu-latest
+
+    steps:
+      # 步骤1: 拉取你的代码到云端服务器
+      - name: 拉取代码
+        uses: actions/checkout@v4
+        with:
+          submodules: 'recursive'  # 如果项目有子模块，必须加上这行
+
+      # 步骤2: 安装 ESP-IDF 环境（核心步骤）
+      - name: 安装 ESP-IDF v5.5
+        uses: espressif/esp-idf-ci-action@v1
+        with:
+          esp_idf_version: 'v5.5' # 指定使用 ESP-IDF v5.5.x 版本
+
+      # 步骤3: 配置项目并选择目标芯片
+      - name: 配置项目
+        run: |
+          idf.py set-target esp32c3  # 请根据你的芯片型号修改，例如 esp32s3, esp32c3
+          # idf.py menuconfig  # 如果你需要自定义配置，可以在这里添加，或者注释掉
+
+      # 步骤4: 编译项目，生成固件
+      - name: 编译固件
+        run: idf.py build
+
+      # 步骤5: 上传编译好的固件作为构建产物，方便下载
+      - name: 上传固件产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: esp32-firmware  # 产物包的名称，可以自定义
+          path: |
+            build/*.bin
+            build/*.elf
+            build/*.map
