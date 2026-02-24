@@ -12,17 +12,10 @@ dependencies:
   idf:
     source:
       type: idf
-    version: 5.5.2
-  kevincoooool/esp_lcd_st7305:
-    dependencies: []
-    source:
-      path: C:\Users\Kirl\Documents\ESP-IDF_Project\st7305port\components\kevincoooool__esp_lcd_st7305
-      type: local
-    version: 0.0.2
+    version: 5.5.3
 direct_dependencies:
 - espressif/cmake_utilities
 - idf
-- kevincoooool/esp_lcd_st7305
-manifest_hash: 00c85dc7259ec283203ec9a01e000ea6a082efdf6c27e79e1a5b73384002a2d7
+manifest_hash: 3cc102e6a14d4d4d0d730d61d5df12639f9ab91f9c960f5a52ede2061c3d75ba
 target: esp32c3
 version: 2.0.0

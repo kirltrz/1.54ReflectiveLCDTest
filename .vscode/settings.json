@@ -18,6 +18,6 @@
   ],
   "commentTranslate.source": "intellsmi.comment-translate-ali.cloud",
   "idf.flashType": "UART",
-  "idf.currentSetup": "C:\\esp\\v5.5.2\\esp-idf",
+  "idf.currentSetup": "C:\\esp\\v5.5.3\\esp-idf",
   "idf.enableSizeTaskAfterBuildTask": false
 }
