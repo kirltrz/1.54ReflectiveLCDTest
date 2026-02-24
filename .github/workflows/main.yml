@@ -27,17 +27,15 @@ jobs:
         with:
           esp_idf_version: 'v5.5' # 指定使用 ESP-IDF v5.5.x 版本
 
-      # 步骤3: 配置项目并选择目标芯片
+      # 步骤3: 配置项目、选择目标芯片并编译
       - name: 配置项目
         run: |
+          . $IDF_PATH/export.sh
           idf.py set-target esp32c3  # 请根据你的芯片型号修改，例如 esp32s3, esp32c3
           # idf.py menuconfig  # 如果你需要自定义配置，可以在这里添加，或者注释掉
+          idf.py build
 
-      # 步骤4: 编译项目，生成固件
-      - name: 编译固件
-        run: idf.py build
-
-      # 步骤5: 上传编译好的固件作为构建产物，方便下载
+      # 步骤4: 上传编译好的固件作为构建产物，方便下载
       - name: 上传固件产物
         uses: actions/upload-artifact@v4
         with:
