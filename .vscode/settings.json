@@ -17,5 +17,7 @@
     "--compile-commands-dir=c:\\Users\\Kirl\\Documents\\st7305port\\build"
   ],
   "commentTranslate.source": "intellsmi.comment-translate-ali.cloud",
-  "idf.flashType": "UART"
+  "idf.flashType": "UART",
+  "idf.currentSetup": "C:\\esp\\v5.5.2\\esp-idf",
+  "idf.enableSizeTaskAfterBuildTask": false
 }

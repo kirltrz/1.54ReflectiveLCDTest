@@ -6,30 +6,23 @@ dependencies:
       require: private
       version: '>=4.1'
     source:
-      registry_url: https://components.espressif.com
+      registry_url: https://components.espressif.com/
       type: service
     version: 0.5.3
   idf:
     source:
       type: idf
-    version: 5.4.3
+    version: 5.5.2
   kevincoooool/esp_lcd_st7305:
-    component_hash: 836bdeeaf1284004e4673d302f95e515c54cc407595af1aee95626f53ecfba25
-    dependencies:
-    - name: espressif/cmake_utilities
-      registry_url: https://components.espressif.com
-      require: private
-      version: 0.*
-    - name: idf
-      require: private
-      version: '>=4.4'
+    dependencies: []
     source:
-      registry_url: https://components.espressif.com/
-      type: service
+      path: C:\Users\Kirl\Documents\ESP-IDF_Project\st7305port\components\kevincoooool__esp_lcd_st7305
+      type: local
     version: 0.0.2
 direct_dependencies:
+- espressif/cmake_utilities
 - idf
 - kevincoooool/esp_lcd_st7305
-manifest_hash: 9ca2e478e648ad30624f04e3cb3dfcbcfd95fdfa2bf0e923bbec1a59b1813bf9
+manifest_hash: 00c85dc7259ec283203ec9a01e000ea6a082efdf6c27e79e1a5b73384002a2d7
 target: esp32c3
 version: 2.0.0
