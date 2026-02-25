@@ -1,12 +1,10 @@
 # .github/workflows/esp-idf-ci.yml
 name: ESP-IDF v5.5.x 自动编译
 
-# 触发条件：当代码推送到 main 分支或创建 PR 时
+# 触发条件：当推送以v开头的tag时触发（如v1.0、v2.5.0、v5.5.1等）
 on:
   push:
-    branches: [ master ]
-  pull_request:
-    branches: [ master ]
+    tags: ['v*']
 
 # 要执行的任务
 jobs:
